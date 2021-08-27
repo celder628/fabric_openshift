@@ -1,0 +1,173 @@
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-${orderer_name}
+spec:
+  storageClassName: default
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1G
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${orderer_name}
+spec:
+  ports:
+    - name: general
+      port: 7050
+      targetPort: 7050
+  selector:
+    app: ${orderer_name}
+status:
+  loadBalancer: {}
+
+---
+
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: ${orderer_name}
+spec:
+  host: ${orderer_name}.${domain}
+  to:
+    kind: Service
+    name: ${orderer_name}
+    weight: 100
+  port:
+    targetPort: general
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: None
+  wildcardPolicy: None
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ${orderer_name}
+    type: orderer
+  name: ${orderer_name}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${orderer_name}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: ${orderer_name}
+        type: orderer
+    spec:
+      containers:
+        - env:
+            - name: FABRIC_CFG_PATH
+              value: \"/data/config\"
+            - name: ORDERER_HOME
+              value: \"/data\"
+            - name: ORDERER_HOST
+              value: \"${orderer_name}.${domain}\"
+            - name: ORDERER_GENERAL_LISTENPORT
+              value: \"7050\"
+            - name: ORDERER_GENERAL_LISTENADDRESS
+              value: \"0.0.0.0\"
+            - name: ORDERER_GENERAL_GENESISMETHOD
+              value: \"file\"
+            - name: ORDERER_GENERAL_BOOTSTRAPFILE
+              value: \"/data/config/genesis.block\"
+            - name: ORDERER_GENERAL_LOCALMSPID
+              value: \"${mspid}\"
+            - name: ORDERER_GENERAL_LOCALMSPDIR
+              value: \"/cert/msp\"
+            - name: ORDERER_GENERAL_TLS_ENABLED
+              value: \"true\"
+            - name: ORDERER_GENERAL_TLS_CERTIFICATE
+              value: \"/cert/tls/cert.pem\"
+            - name: ORDERER_GENERAL_TLS_PRIVATEKEY
+              value: \"/cert/tls/key.pem\"
+            - name: ORDERER_GENERAL_TLS_ROOTCAS
+              value: \"[/cert/tls/ca-cert.pem]\"
+            - name: ORDERER_GENERAL_LOGLEVEL
+              value: \"debug\"
+            - name: ORDERER_DEBUG_BROADCASTTRACEDIR
+              value: \"data/logs\"
+            - name: ORDERER_FILELEDGER_LOCATION
+              value: \"/data/ledger\"
+            - name: ORDERER_CONSENSUS_WALDIR
+              value: \"/data/etcdraft/wal\"
+            - name: ORDERER_CONSENSUS_SNAPDIR
+              value: \"/data/etcdraft/snapshot\"
+            - name: FABRIC_LOGGING_SPEC
+              value: \"info:msp=debug\"
+          image: hyperledger/fabric-orderer:2.3.2
+          name: ${orderer_name}
+          ports:
+            - containerPort: 7050
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: pvc-${orderer_name}
+            - name: config
+              mountPath: /data/config
+            - name: msp-config
+              mountPath: "/cert/msp"
+            - name: msp-keystore
+              mountPath: "/cert/msp/keystore"
+            - name: msp-signcerts
+              mountPath: "/cert/msp/signcerts"
+            - name: msp-cacerts
+              mountPath: "/cert/msp/cacerts"
+            - name: tls
+              mountPath: "/cert/tls"
+      restartPolicy: Always
+      volumes:
+        - name: pvc-${orderer_name}
+          persistentVolumeClaim:
+            claimName: pvc-${orderer_name}
+        - name: config
+          configMap:
+            name: ${orderer_name}
+        - name: msp-config
+          configMap:
+            name: ${orderer_name}-config
+        - name: msp-keystore
+          secret:
+            secretName: ${orderer_name}-msp
+            items:
+            - key: keystore
+              path: key.pem
+        - name: msp-signcerts
+          secret:
+            secretName: ${orderer_name}-msp
+            items:
+            - key: signcerts
+              path: cert.pem
+        - name: msp-cacerts
+          secret:
+            secretName: ${orderer_name}-msp
+            items:
+            - key: cacerts
+              path: ca-cert.pem
+        - name: tls
+          secret:
+            secretName: ${orderer_name}-tls
+            items:
+            - key: keystore
+              path: key.pem
+              mode: 0420
+            - key: signcerts
+              path: cert.pem
+              mode: 0420
+            - key: cacerts
+              path: ca-cert.pem
+              mode: 0420

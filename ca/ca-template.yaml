@@ -1,0 +1,112 @@
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-${ca_name}
+spec:
+  storageClassName: default
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1G
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${ca_name}
+spec:
+  ports:
+    - name: general
+      port: 7053
+      targetPort: 7053
+  selector:
+    app: ${ca_name}
+status:
+  loadBalancer: {}
+
+---
+
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: ${ca_name}
+spec:
+  host: ${ca_name}.${domain}
+  to:
+    kind: Service
+    name: ${ca_name}
+    weight: 100
+  port:
+    targetPort: general
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: None
+  wildcardPolicy: None
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ${ca_name}
+    type: ca
+  name: ${ca_name}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${ca_name}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: ${ca_name}
+        type: ca
+    spec:
+      containers:
+        - args:
+            - sh
+            - -c
+            - mkdir -p /data/ca && mkdir -p /data/ca/tlsca && cp /data/ca-config/fabric-ca-server-config.yaml /data/ca/fabric-ca-server-config.yaml && cp /data/tls-config/tls-fabric-ca-server-config.yaml /data/ca/tlsca/fabric-ca-server-config.yaml && fabric-ca-server start -d -b admin:adminpw --port 7053
+          env:
+            - name: FABRIC_CA_SERVER_CSR_CN
+              value: ${ca_name}
+            - name: FABRIC_CA_SERVER_CSR_HOSTS
+              value: ${ca_name}.${domain}
+            - name: FABRIC_CA_SERVER_DEBUG
+              value: \"true\"
+            - name: FABRIC_CA_SERVER_HOME
+              value: /data/ca
+            - name: FABRIC_CA_SERVER_TLS_ENABLED
+              value: \"true\"
+            - name: FABRIC_OPERATIONS_LISTENADDRESS
+              value: 127.0.0.1:9443
+          image: hyperledger/fabric-ca
+          name: ${ca_name}
+          ports:
+            - containerPort: 7053
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: pvc-${ca_name}
+            - name: ca-config
+              mountPath: /data/ca-config
+            - name: tls-config
+              mountPath: /data/tls-config
+      restartPolicy: Always
+      volumes:
+        - name: pvc-${ca_name}
+          persistentVolumeClaim:
+            claimName: pvc-${ca_name}
+        - name: ca-config
+          configMap:
+            name: ${ca_name}-ca
+        - name: tls-config
+          configMap:
+            name: ${ca_name}-tlsca

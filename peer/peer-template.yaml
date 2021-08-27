@@ -1,0 +1,191 @@
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-${peer_name}
+spec:
+  storageClassName: default
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1G
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${peer_name}
+spec:
+  ports:
+    - name: gossip
+      port: 7051
+      targetPort: 7051
+    - name: chaincode
+      port: 7052
+      targetPort: 7052
+  selector:
+    app: ${peer_name}
+status:
+  loadBalancer: {}
+
+---
+
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: ${peer_name}
+spec:
+  host: ${peer_name}.${domain}
+  to:
+    kind: Service
+    name: ${peer_name}
+    weight: 100
+  port:
+    targetPort: gossip
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: None
+  wildcardPolicy: None
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ${peer_name}
+    type: peer
+  name: ${peer_name}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${peer_name}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: ${peer_name}
+        type: peer
+    spec:
+      containers:
+        - env:
+            - name: FABRIC_CFG_PATH
+              value: \"/data/config\"
+            - name: CORE_PEER_ID
+              value: \"${peer_name}\"
+            - name: CORE_PEER_ADDRESS
+              value: \"${peer_name}.${domain}:7051\"
+            - name: CORE_PEER_LISTENADDRESS
+              value: \"0.0.0.0:7051\"
+            - name: CORE_PEER_CHAINCODEADDRESS
+              value: \"${peer_name}.${domain}:7052\"
+            - name: CORE_PEER_CHAINCODELISTENADDRESS
+              value: \"0.0.0.0:7052\"
+            - name: CORE_PEER_LOCALMSPID
+              value: \"${mspid}\"
+            - name: CORE_PEER_MSPCONFIGPATH
+              value: \"/cert/msp\"
+            - name: FABRIC_LOGGING_SPEC
+              value: \"debug:cauthdsl,policies,msp,grpc,peer.gossip.mcs,gossip,leveldbhelper=info\"
+            - name: CORE_PEER_TLS_ENABLED
+              value: \"true\"
+            - name: CORE_PEER_TLS_CERT_FILE
+              value: \"/cert/tls/cert.pem\"
+            - name: CORE_PEER_TLS_KEY_FILE
+              value: \"/cert/tls/key.pem\"
+            - name: CORE_PEER_TLS_ROOTCERT_FILE
+              value: \"/cert/tls/ca-cert.pem\"
+            - name: CORE_PEER_GOSSIP_USELEADERELECTION
+              value: \"true\"
+            - name: CORE_PEER_GOSSIP_ORGLEADER
+              value: \"false\"
+            - name: CORE_PEER_GOSSIP_EXTERNALENDPOINT
+              value: \"${peer_name}.${domain}:7051\"
+            - name: CORE_PEER_GOSSIP_SKIPHANDSHAKE
+              value: \"true\"
+            - name: CORE_OPERATIONS_LISTENADDRESS
+              value: \"127.0.0.1:9449\"
+            - name: CORE_PEER_FILESYSTEMPATH
+              value: \"/data\"
+          command: ['sh', '-c', \"apk update && apk upgrade && apk add bash jq && mkdir -p /data/builder/bin && cp /external-builder/* /data/builder/bin && chmod +x /data/builder/bin/* && peer node start\"]
+          image: hyperledger/fabric-peer:2.3.2
+          name: ${peer_name}
+          ports:
+            - containerPort: 7051
+            - containerPort: 7052
+          resources: {}
+          volumeMounts:
+            - mountPath: /data
+              name: pvc-${peer_name}
+            - name: config
+              mountPath: /data/config
+            - name: msp-config
+              mountPath: "/cert/msp"
+            - name: external-builder
+              mountPath: "/external-builder"
+            - name: msp-admincerts
+              mountPath: "/cert/msp/admincerts"
+            - name: msp-keystore
+              mountPath: "/cert/msp/keystore"
+            - name: msp-signcerts
+              mountPath: "/cert/msp/signcerts"
+            - name: msp-cacerts
+              mountPath: "/cert/msp/cacerts"
+            - name: tls
+              mountPath: "/cert/tls"
+      restartPolicy: Always
+      volumes:
+        - name: pvc-${peer_name}
+          persistentVolumeClaim:
+            claimName: pvc-${peer_name}
+        - name: config
+          configMap:
+            name: ${peer_name}
+        - name: msp-config
+          configMap:
+            name: ${peer_name}-config
+        - name: external-builder
+          configMap:
+            name: ${peer_name}-external-builder
+        - name: msp-admincerts
+          secret:
+            secretName: ${peer_name}-msp
+            items:
+            - key: admincerts
+              path: cert.pem
+        - name: msp-keystore
+          secret:
+            secretName: ${peer_name}-msp
+            items:
+            - key: keystore
+              path: key.pem
+        - name: msp-signcerts
+          secret:
+            secretName: ${peer_name}-msp
+            items:
+            - key: signcerts
+              path: cert.pem
+        - name: msp-cacerts
+          secret:
+            secretName: ${peer_name}-msp
+            items:
+            - key: cacerts
+              path: ca-cert.pem
+        - name: tls
+          secret:
+            secretName: ${peer_name}-tls
+            items:
+            - key: keystore
+              path: key.pem
+              mode: 420
+            - key: signcerts
+              path: cert.pem
+              mode: 0420
+            - key: cacerts
+              path: ca-cert.pem
+              mode: 0420
